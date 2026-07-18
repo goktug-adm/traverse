@@ -42,17 +42,17 @@ can be dropped onto any static host, including GitHub Pages.
 ## Project layout
 
 ```
+scripts/
+  gen-data.mjs          generates src/data/*.json from npm data packages (runs pre-build)
 src/
-  main.js               app orchestration: globe, panel, toolbar, search
+  main.js               app orchestration: globe, panel, toolbar, search, zoom LOD
   state.js              localStorage-backed store (visits, cities, places)
   viewer.js             standalone 3D monument viewer modal
+  citybuildings.js      procedural city skylines that appear at close zoom
   monuments/
     builders.js         ~35 procedural low-poly monument archetypes (three.js)
     catalog.js          country → monument mapping (name, coords, builder, params)
-  data/
-    countries-110m.json world-atlas TopoJSON country polygons
-    countries.json      compact country metadata (ISO codes, capital, flag, region)
-    cities.json         top cities per country, filtered from GeoNames
+  data/                 (generated) country metadata + top cities per country
   style.css
 ```
 
@@ -60,8 +60,9 @@ src/
 
 - Country polygons: [world-atlas](https://github.com/topojson/world-atlas) (Natural Earth, public domain)
 - Country metadata: [world-countries](https://github.com/mledoze/countries) (ODbL)
-- Cities: filtered from [GeoNames](https://www.geonames.org/) `cities15000` (CC BY 4.0)
+- Cities: [all-the-cities](https://www.npmjs.com/package/all-the-cities), derived from [GeoNames](https://www.geonames.org/) (CC BY 4.0)
 - Globe rendering: [globe.gl](https://github.com/vasturiano/globe.gl) / three.js
+- Fonts: Space Grotesk & Inter via [Fontsource](https://fontsource.org/) (OFL)
 
 Monument models are original stylized low-poly interpretations, generated procedurally —
 they aim for silhouette recognisability, not architectural accuracy.

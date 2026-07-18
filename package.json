@@ -1,7 +1,7 @@
 {
   "name": "traverse",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
   "description": "A 3D world travel tracker — spin the globe, record your visits, pin your favourite places and explore low-poly 3D monuments of the world.",
   "repository": {
@@ -10,7 +10,9 @@
   },
   "license": "MIT",
   "scripts": {
+    "predev": "node scripts/gen-data.mjs",
     "dev": "vite",
+    "prebuild": "node scripts/gen-data.mjs",
     "build": "vite build",
     "preview": "vite preview"
   },
@@ -23,6 +25,8 @@
     "world-atlas": "^2.0.2"
   },
   "devDependencies": {
+    "all-the-cities": "^3.1.0",
+    "world-countries": "^5.1.0",
     "vite": "^8.1.5"
   }
 }
