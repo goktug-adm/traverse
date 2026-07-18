@@ -174,7 +174,6 @@ function makeMarker(d) {
   if (d.type === 'famous') {
     el = document.createElement('div');
     el.className = 'city-badge' + (store.isCityVisited(d.c, d.n) ? ' visited' : '');
-    el.textContent = d.r;
     el.title = `#${d.r} ${d.n}, ${countryName(d.c)}`;
     el.addEventListener('click', e => { e.stopPropagation(); openCity(d); });
   } else {

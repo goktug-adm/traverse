@@ -206,19 +206,17 @@ body {
 
 /* ---------- famous-city badges & place pins (globe html markers) ---------- */
 .city-badge {
-  width: 23px; height: 23px; border-radius: 50%;
-  background: linear-gradient(160deg, #ffd97a, var(--accent-2) 70%);
-  color: #241703; font-family: var(--font-display); font-weight: 700; font-size: 10.5px;
-  display: flex; align-items: center; justify-content: center;
-  border: 1.5px solid rgba(255, 255, 255, 0.7);
-  box-shadow: 0 0 12px rgba(247, 179, 43, 0.55), 0 2px 6px rgba(0, 0, 0, 0.4);
+  width: 13px; height: 13px; border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, #ffe6a8, var(--accent-2) 75%);
+  border: 1.5px solid rgba(255, 255, 255, 0.8);
+  box-shadow: 0 0 10px rgba(247, 179, 43, 0.6), 0 1px 4px rgba(0, 0, 0, 0.4);
   cursor: pointer; pointer-events: auto;
   transition: transform 0.15s, box-shadow 0.15s;
 }
-.city-badge:hover { transform: scale(1.35); box-shadow: 0 0 20px rgba(247, 179, 43, 0.9), 0 2px 8px rgba(0, 0, 0, 0.5); z-index: 5; }
+.city-badge:hover { transform: scale(1.7); box-shadow: 0 0 18px rgba(247, 179, 43, 0.95), 0 1px 6px rgba(0, 0, 0, 0.5); z-index: 5; }
 .city-badge.visited {
-  background: linear-gradient(160deg, #7cf5d4, var(--visited) 70%);
-  box-shadow: 0 0 12px rgba(46, 230, 184, 0.6), 0 2px 6px rgba(0, 0, 0, 0.4);
+  background: radial-gradient(circle at 35% 30%, #9ffce0, var(--visited) 75%);
+  box-shadow: 0 0 10px rgba(46, 230, 184, 0.65), 0 1px 4px rgba(0, 0, 0, 0.4);
 }
 .pin-marker {
   font-size: 20px; cursor: pointer; pointer-events: auto;
@@ -425,12 +423,52 @@ body {
 .globe-tooltip .t-sub { font-size: 11px; color: var(--muted); margin-top: 2px; }
 .globe-tooltip .t-visited { color: var(--visited); font-size: 11px; margin-top: 2px; }
 
-@media (max-width: 860px) {
-  #topbar { flex-wrap: wrap; }
-  .panel { width: min(88vw, 330px); top: 120px; }
-  .searchbox input { width: 140px; }
-  .searchbox input:focus { width: 170px; }
-  .stats { margin-left: 0; }
-  .stats .stat:not(.progress) { display: none; }
+/* ================= mobile & small screens ================= */
+@media (max-width: 900px), (max-height: 560px) {
+  #topbar {
+    top: calc(6px + env(safe-area-inset-top)); left: 8px; right: 8px;
+    gap: 6px; align-items: center;
+  }
+  #topbar > * { border-radius: 14px; }
+  .brand { padding: 6px 10px; gap: 7px; }
+  .brand-icon { font-size: 21px; }
+  .brand-text h1 { font-size: 13px; letter-spacing: 2px; }
   .brand-text .tagline { display: none; }
+  .searchbox { flex: 1; min-width: 0; padding: 0 4px 0 10px; }
+  .searchbox input { width: 100%; padding: 8px 8px; font-size: 12.5px; }
+  .searchbox input:focus { width: 100%; }
+  .stats { margin-left: 0; padding: 4px; flex: none; }
+  .stats .stat:not(.progress) { display: none; }
+  .stat.progress { min-width: 86px; padding: 2px 10px; border-right: none; }
+  .stat.progress b { font-size: 14px; }
+  .stat.progress span { font-size: 8px; letter-spacing: 0.8px; }
+
+  /* toolbar becomes a compact horizontal dock under the top bar */
+  #toolbar {
+    top: calc(58px + env(safe-area-inset-top)); bottom: auto; left: 8px;
+    flex-direction: row; gap: 3px; padding: 4px; border-radius: 14px;
+  }
+  .dock-sep { width: 1px; height: auto; margin: 6px 3px; }
+  .tool { width: 36px; height: 36px; font-size: 17px; border-radius: 11px; }
+  .tool::after { display: none; }   /* hover tooltips don't exist on touch */
+
+  /* side panel becomes a bottom sheet */
+  .panel {
+    top: auto; left: 8px; right: 8px;
+    bottom: calc(8px + env(safe-area-inset-bottom));
+    width: auto; max-height: 44vh; padding: 14px 14px 16px;
+    border-radius: 18px;
+  }
+  .panel h2 { font-size: 16px; }
+  .panel .flag { font-size: 24px; }
+  .visit-toggle { margin-top: 10px; padding: 10px; font-size: 13px; }
+  .rank-list { max-height: 190px; }
+  .welcome-hero { padding: 2px 0 0; }
+  .welcome-hero .big { font-size: 30px; }
+  .welcome-hero p { margin-top: 6px; font-size: 11.5px; }
+
+  .hint { display: none; }
+  .photo-del { opacity: 0.85; }     /* always visible — no hover on touch */
+  .city-row [data-action] { min-height: 30px; }
+  #viewer-canvas { height: 50vh; }
 }
