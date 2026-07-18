@@ -71,7 +71,7 @@ const monDatum = rec => {
 
 let selected = null;        // country record
 let hovered = null;
-let showMonuments = true;
+let showMonuments = false;  // 3D figure fleet is opt-in — keeps the globe fast
 let showAllMonuments = false;
 let addPlaceArmed = false;
 let pendingPlace = null;    // { lat, lng, a2 }
@@ -85,7 +85,7 @@ const LOD = {
 };
 // which cities deserve a skyline at this altitude, and how many at most
 const cityMinPop = alt => alt > 0.32 ? 1e6 : alt > 0.18 ? 3e5 : 0;
-const cityMax = alt => alt > 0.32 ? 18 : alt > 0.18 ? 35 : 60;
+const cityMax = alt => alt > 0.32 ? 18 : alt > 0.18 ? 30 : 45;
 // skylines grow as you descend, so they pop in small and unobtrusive
 const cityZoomScale = () => THREE.MathUtils.clamp((LOD.cities - pov.altitude) * 2.4 + 0.35, 0.35, 1);
 // on-globe labels keep a sane apparent size as you dive in
@@ -166,6 +166,7 @@ const globe = new Globe(document.getElementById('globe'))
 globe.globeMaterial().color = new THREE.Color(0x0d2036);
 globe.globeMaterial().emissive = new THREE.Color(0x081a30);
 globe.globeMaterial().emissiveIntensity = 0.42;
+globe.renderer().setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.75));
 
 globe.pointOfView({ lat: 35, lng: 25, altitude: 2.3 }, 0);
 globe.controls().autoRotate = true;
@@ -441,6 +442,65 @@ importFile.addEventListener('change', async () => {
   importFile.value = '';
 });
 
+/* ================= photos ================= */
+
+const photoFile = document.getElementById('photo-file');
+const photoModal = document.getElementById('photo-modal');
+const photoFull = document.getElementById('photo-full');
+let photoTarget = null;   // { type: 'country', a2 } | { type: 'place', id }
+
+// downscale + recompress so localStorage holds dozens of photos
+function shrinkImage(file, maxDim = 900) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      const s = Math.min(1, maxDim / Math.max(img.width, img.height));
+      const cv = document.createElement('canvas');
+      cv.width = Math.round(img.width * s);
+      cv.height = Math.round(img.height * s);
+      cv.getContext('2d').drawImage(img, 0, 0, cv.width, cv.height);
+      URL.revokeObjectURL(url);
+      resolve(cv.toDataURL('image/jpeg', 0.72));
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('Not an image')); };
+    img.src = url;
+  });
+}
+
+photoFile.addEventListener('change', async () => {
+  if (!photoTarget) return;
+  const files = [...photoFile.files].slice(0, 6);
+  for (const f of files) {
+    try {
+      const url = await shrinkImage(f);
+      const ok = photoTarget.type === 'country'
+        ? store.addCountryPhoto(photoTarget.a2, url)
+        : store.addPlacePhoto(photoTarget.id, url);
+      if (!ok) { alert('Storage is full — delete some photos first.'); break; }
+    } catch (e) { /* skip non-images */ }
+  }
+  photoFile.value = '';
+  photoTarget = null;
+  renderPanel();
+});
+
+function openLightbox(src) {
+  photoFull.src = src;
+  photoModal.classList.remove('hidden');
+}
+photoModal.addEventListener('click', () => photoModal.classList.add('hidden'));
+
+const photoStrip = (photos, owner, extra = '') => `
+  <div class="photo-strip${extra}">
+    ${photos.map((ph, i) => `
+      <div class="photo-thumb">
+        <img class="photo-view" src="${ph}" alt="" />
+        <button class="photo-del" data-action="del-photo" data-owner="${owner}" data-i="${i}" title="Delete photo">✕</button>
+      </div>`).join('')}
+    ${owner.startsWith('place:') ? '' : `<div class="photo-add" data-action="add-country-photo" title="Add photos">＋</div>`}
+  </div>`;
+
 /* ================= place modal ================= */
 
 const placeModal = document.getElementById('place-modal');
@@ -518,6 +578,8 @@ function renderPanel() {
         <input type="date" id="visit-date" value="${c.date || ''}" /></div>
       <div class="field"><label>Notes</label>
         <textarea id="visit-notes" rows="2" placeholder="Memories, tips, food you loved…">${esc(c.notes || '')}</textarea></div>
+      <h3>📷 Photos${c.photos?.length ? ` (${c.photos.length})` : ''}</h3>
+      ${photoStrip(c.photos || [], 'country')}
     ` : ''}
 
     <h3>🏛️ Monument</h3>
@@ -551,9 +613,11 @@ function placeRow(p) {
       <div class="p-head">
         <span class="p-name">📍 ${esc(p.name)}</span>
         <span class="p-stars">${'★'.repeat(p.rating || 0)}</span>
+        <button class="p-del" data-action="add-place-photo" data-id="${p.id}" title="Add photos">📷</button>
         <button class="p-del" data-action="del-place" data-id="${p.id}" title="Delete">🗑</button>
       </div>
       ${p.notes ? `<div class="p-notes">${esc(p.notes)}</div>` : ''}
+      ${p.photos?.length ? photoStrip(p.photos, 'place:' + p.id, ' small') : ''}
     </div>`;
 }
 
@@ -586,10 +650,31 @@ function renderWelcome() {
 }
 
 panel.addEventListener('click', e => {
+  if (e.target.classList?.contains('photo-view')) {
+    e.stopPropagation();
+    return openLightbox(e.target.src);
+  }
   const t = e.target.closest('[data-action]');
   if (!t) return;
   const action = t.dataset.action;
-  if (action === 'back') { selected = null; refreshAll(); }
+  if (action === 'add-country-photo') {
+    photoTarget = { type: 'country', a2: selected.a2 };
+    photoFile.click();
+  }
+  else if (action === 'add-place-photo') {
+    e.stopPropagation();
+    photoTarget = { type: 'place', id: t.dataset.id };
+    photoFile.click();
+  }
+  else if (action === 'del-photo') {
+    e.stopPropagation();
+    const owner = t.dataset.owner, i = +t.dataset.i;
+    if (!confirm('Delete this photo?')) return;
+    if (owner === 'country') store.removeCountryPhoto(selected.a2, i);
+    else store.removePlacePhoto(owner.slice(6), i);
+    renderPanel();
+  }
+  else if (action === 'back') { selected = null; refreshAll(); }
   else if (action === 'toggle-country') { store.toggleCountry(selected.a2); refreshAll(); }
   else if (action === 'view-monument') { const d = monDatum(selected); openViewer(d.entry, selected.name); }
   else if (action === 'toggle-city') {

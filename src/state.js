@@ -20,8 +20,13 @@ function load() {
 }
 
 function save() {
-  localStorage.setItem(KEY, JSON.stringify(data));
+  try {
+    localStorage.setItem(KEY, JSON.stringify(data));
+  } catch (e) {
+    return false;   // storage quota exceeded — caller decides how to react
+  }
   listeners.forEach(fn => fn(data));
+  return true;
 }
 
 export const cityKey = (a2, name) => `${a2}|${name}`;
@@ -69,6 +74,28 @@ export const store = {
     save();
   },
   placesIn: a2 => data.places.filter(p => p.a2 === a2),
+
+  addCountryPhoto(a2, url) {
+    const c = data.countries[a2] || (data.countries[a2] = {});
+    (c.photos ||= []).push(url);
+    if (!save()) { c.photos.pop(); save(); return false; }
+    return true;
+  },
+  removeCountryPhoto(a2, i) {
+    data.countries[a2]?.photos?.splice(i, 1);
+    save();
+  },
+  addPlacePhoto(id, url) {
+    const p = data.places.find(x => x.id === id);
+    if (!p) return false;
+    (p.photos ||= []).push(url);
+    if (!save()) { p.photos.pop(); save(); return false; }
+    return true;
+  },
+  removePlacePhoto(id, i) {
+    data.places.find(x => x.id === id)?.photos?.splice(i, 1);
+    save();
+  },
 
   stats(totalCountries) {
     const visited = Object.values(data.countries).filter(c => c.visited).length;
