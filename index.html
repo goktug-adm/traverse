@@ -9,32 +9,35 @@
 <body>
   <div id="app">
     <div id="globe"></div>
+    <div id="vignette"></div>
 
     <header id="topbar">
-      <div class="brand">
+      <div class="brand glass">
         <span class="brand-icon">🌍</span>
         <div class="brand-text">
           <h1>Traverse</h1>
           <span class="tagline">your world, in 3D</span>
         </div>
       </div>
-      <div class="searchbox">
+      <div class="searchbox glass">
+        <span class="search-icon">🔎</span>
         <input id="search" type="text" list="country-list" placeholder="Search a country…" autocomplete="off" />
         <datalist id="country-list"></datalist>
       </div>
-      <div id="stats" class="stats"></div>
+      <div id="stats" class="stats glass"></div>
     </header>
 
-    <div id="toolbar">
-      <button id="btn-add-place" class="tool" title="Click the globe to drop a pin at your favourite spot">📍 Add place</button>
-      <button id="btn-monuments" class="tool active" title="Show 3D monuments on the globe">🏛️ Monuments</button>
-      <button id="btn-all-monuments" class="tool" title="Show every country's monument (heavier on the GPU)">🌐 All</button>
-      <button id="btn-export" class="tool" title="Download your travel data as JSON">⬇ Export</button>
-      <button id="btn-import" class="tool" title="Restore travel data from a JSON file">⬆ Import</button>
+    <div id="toolbar" class="glass">
+      <button id="btn-add-place" class="tool" data-tip="Add a place — click the globe to drop a pin"><span>📍</span></button>
+      <button id="btn-monuments" class="tool active" data-tip="3D monuments on the globe"><span>🏛️</span></button>
+      <button id="btn-all-monuments" class="tool" data-tip="Force-show every country's monument"><span>🌐</span></button>
+      <div class="dock-sep"></div>
+      <button id="btn-export" class="tool" data-tip="Export your travels as JSON"><span>💾</span></button>
+      <button id="btn-import" class="tool" data-tip="Import travels from JSON"><span>📂</span></button>
       <input id="import-file" type="file" accept="application/json" hidden />
     </div>
 
-    <div id="hint" class="hint">Drag to spin · Scroll to zoom · Click a country to begin</div>
+    <div id="hint" class="hint glass">Drag to spin · scroll to zoom · <b>zoom in to reveal 3D cities</b></div>
 
     <aside id="panel" class="panel">
       <div id="panel-content"></div>
