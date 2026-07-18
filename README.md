@@ -6,26 +6,24 @@ a stylized low-poly **3D monument for (approximately) every country on the plane
 
 ![stack](https://img.shields.io/badge/three.js-globe.gl-blue) ![build](https://img.shields.io/badge/bundler-vite-purple)
 
+> **v0.3** — the experimental 3D monument/city models were retired in favour of a
+> clean globe with ranked famous-city badges and live "places to visit" data.
+
 ## Features
 
 - **Interactive 3D globe** — drag to spin, scroll to zoom, hover for country info.
   Visited countries glow teal; the selected country lifts off the surface.
-- **Country visits** — mark any of the world's countries/territories as visited, with a
-  first-visit date and free-form notes.
-- **City checklists** — the top ~12 cities of every country (capitals starred), each
-  individually checkable. Ticking a city auto-marks its country. City labels appear on
-  the globe when a country is selected — click a label to toggle it too.
-- **My places** — arm *“📍 Add place”* and click anywhere on the globe to drop a pin:
-  name it, rate it 1–5 stars, add notes. Your pins live on the globe and in the panel.
-- **3D monuments** — a hand-curated catalog of **130+ real monuments** (Eiffel Tower,
-  Taj Mahal, Colosseum, Moai, Angkor Wat, Djenné Mosque, Sydney Opera House…), each built
-  procedurally from ~35 low-poly architectural archetypes. Famous ones stand directly on
-  the globe; every country's monument can be opened in a dedicated orbit-controlled 3D
-  viewer. Countries without a curated entry get a stylized generic landmark, so every
-  land has something to show.
-- **Stats** — countries / cities / places counters and a "% of the world" progress bar.
-- **Search** — type-ahead country search that flies you there.
-- **Export / import** — your data stays in `localStorage`; back it up or move it as JSON.
+- **World's top cities, ranked** — 60 of the most famous destinations shown as
+  numbered gold badges on the globe and as a ranked list in the panel.
+- **Places to visit** — open any city (badge, ranked list, or a country's city
+  list) and get live sights from the Wikipedia API: photo, description and link,
+  each checkable as "seen".
+- **Country visits** — mark countries visited with a first-visit date, notes and
+  photo attachments; tick off each country's top ~12 cities.
+- **My places** — drop your own pins anywhere with a 1-5 star rating, notes and photos.
+- **Stats** — countries / cities / sights counters and a "% of the world" bar.
+- **Search** — type-ahead for countries and famous cities.
+- **Export / import** — data lives in localStorage; back it up as JSON.
 
 ## Run it
 
@@ -45,13 +43,10 @@ can be dropped onto any static host, including GitHub Pages.
 scripts/
   gen-data.mjs          generates src/data/*.json from npm data packages (runs pre-build)
 src/
-  main.js               app orchestration: globe, panel, toolbar, search, zoom LOD
-  state.js              localStorage-backed store (visits, cities, places)
-  viewer.js             standalone 3D monument viewer modal
-  citybuildings.js      procedural city skylines that appear at close zoom
-  monuments/
-    builders.js         ~35 procedural low-poly monument archetypes (three.js)
-    catalog.js          country → monument mapping (name, coords, builder, params)
+  main.js               app orchestration: globe, panels, markers, search
+  state.js              localStorage-backed store (visits, sights, places, photos)
+  famous.js             ranked list of the world's top city destinations
+  sights.js             live "places to visit" fetcher (Wikipedia API)
   data/                 (generated) country metadata + top cities per country
   style.css
 ```
@@ -63,6 +58,5 @@ src/
 - Cities: [all-the-cities](https://www.npmjs.com/package/all-the-cities), derived from [GeoNames](https://www.geonames.org/) (CC BY 4.0)
 - Globe rendering: [globe.gl](https://github.com/vasturiano/globe.gl) / three.js
 - Fonts: Space Grotesk & Inter via [Fontsource](https://fontsource.org/) (OFL)
+- Sights: live from the [Wikipedia API](https://www.mediawiki.org/wiki/API:Geosearch) (CC BY-SA content)
 
-Monument models are original stylized low-poly interpretations, generated procedurally —
-they aim for silhouette recognisability, not architectural accuracy.

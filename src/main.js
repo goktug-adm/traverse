@@ -9,11 +9,9 @@ import worldTopo from 'world-atlas/countries-110m.json';
 import countryMeta from './data/countries.json';
 import cityRows from './data/cities.json';
 
+import { FAMOUS } from './famous.js';
+import { fetchSights } from './sights.js';
 import { store } from './state.js';
-import { buildMonument } from './monuments/builders.js';
-import { monumentFor, featuredCodes, curatedCodes } from './monuments/catalog.js';
-import { buildCity } from './citybuildings.js';
-import { openViewer } from './viewer.js';
 
 /* ================= data wiring ================= */
 
@@ -33,73 +31,36 @@ const latinize = s => s.normalize('NFD').replace(/[̀-ͯ]/g, '')
 
 const features = topojson.feature(worldTopo, worldTopo.objects.countries).features;
 
-// country records: one per polygon feature
 const countries = features.map(f => {
   const meta = countryMeta[f.id] || NAME_FIXES[f.properties.name] ||
     { a2: 'X-' + f.properties.name, name: f.properties.name, capital: '', region: '', sub: '', flag: '🏳️', lat: 0, lon: 0, area: 0 };
   return { feature: f, a2: meta.a2, meta, name: meta.name };
-}).filter(r => r.name !== 'Antarctica' || true);
+});
 
 const byA2 = new Map(countries.map(r => [r.a2, r]));
 const featureToRec = new Map(countries.map(r => [r.feature, r]));
 
-// cities grouped by country code
 const citiesBy = new Map();
 for (const c of cityRows) {
   if (!citiesBy.has(c.c)) citiesBy.set(c.c, []);
   citiesBy.get(c.c).push(c);
 }
 
-function capitalCoords(a2, meta) {
-  const cap = (citiesBy.get(a2) || []).find(c => c.cap);
-  if (cap) return { la: cap.la, lo: cap.lo };
-  return { la: meta.lat, lo: meta.lon };
-}
-
-function monumentDatumFor(rec) {
-  const entry = monumentFor(rec.a2, rec.meta);
-  const pos = (entry.la != null) ? { la: entry.la, lo: entry.lo } : capitalCoords(rec.a2, rec.meta);
-  return { type: 'monument', a2: rec.a2, entry, lat: pos.la, lng: pos.lo, country: rec.name };
-}
-const monDatumCache = new Map();
-const monDatum = rec => {
-  if (!monDatumCache.has(rec.a2)) monDatumCache.set(rec.a2, monumentDatumFor(rec));
-  return monDatumCache.get(rec.a2);
-};
+const famousKey = c => c.c + '|' + c.n;
+const countryName = a2 => byA2.get(a2)?.name || a2;
+const countryFlag = a2 => byA2.get(a2)?.meta.flag || '🏳️';
 
 /* ================= ui state ================= */
 
-let selected = null;        // country record
+let selected = null;      // country record
+let cityView = null;      // { n, c, la, lo, r? } — city detail panel
 let hovered = null;
-let showMonuments = false;  // 3D figure fleet is opt-in — keeps the globe fast
-let showAllMonuments = false;
 let addPlaceArmed = false;
-let pendingPlace = null;    // { lat, lng, a2 }
-let pov = { lat: 35, lng: 25, altitude: 2.3 };   // current camera point-of-view
+let pendingPlace = null;
+let pov = { lat: 35, lng: 25, altitude: 2.3 };
+let sightsToken = 0;      // guards async sight loads against stale renders
 
-// Level-of-detail: what appears as you zoom in
-const LOD = {
-  curated: 1.8,   // below this altitude, curated monuments in view appear
-  all: 0.9,       // below this, every country's monument in view appears
-  cities: 0.5     // below this, 3D city skylines appear (metros first)
-};
-// which cities deserve a skyline at this altitude, and how many at most
-const cityMinPop = alt => alt > 0.32 ? 1e6 : alt > 0.18 ? 3e5 : 0;
-const cityMax = alt => alt > 0.32 ? 18 : alt > 0.18 ? 30 : 45;
-// skylines grow as you descend, so they pop in small and unobtrusive
-const cityZoomScale = () => THREE.MathUtils.clamp((LOD.cities - pov.altitude) * 2.4 + 0.35, 0.35, 1);
-// on-globe labels keep a sane apparent size as you dive in
 const labelZoom = () => THREE.MathUtils.clamp(pov.altitude * 1.3 + 0.22, 0.35, 1);
-
-// angular distance in degrees between two lat/lng points
-function angDist(lat1, lng1, lat2, lng2) {
-  const d2r = Math.PI / 180;
-  const s = Math.sin((lat2 - lat1) * d2r / 2) ** 2 +
-    Math.cos(lat1 * d2r) * Math.cos(lat2 * d2r) * Math.sin((lng2 - lng1) * d2r / 2) ** 2;
-  return 2 * Math.asin(Math.min(1, Math.sqrt(s))) / d2r;
-}
-// how much of the globe (in degrees from center) is worth populating at this altitude
-const viewRadius = alt => Math.min(110, 18 + alt * 55);
 
 /* ================= globe ================= */
 
@@ -137,31 +98,19 @@ const globe = new Globe(document.getElementById('globe'))
   })
   .onGlobeClick(({ lat, lng }) => {
     if (addPlaceArmed) return beginPlace(lat, lng, '');
-    if (selected) { selected = null; refreshAll(); }
+    if (cityView || selected) { cityView = null; selected = null; refreshAll(); }
   })
-  .objectLat('lat').objectLng('lng')
-  .objectAltitude(() => 0.0095)
-  .objectThreeObject(d => makeObject3D(d))
-  .objectLabel(d => {
-    if (d.type === 'monument')
-      return `<div class="globe-tooltip"><b>🏛️ ${d.entry.n}</b><div class="t-sub">${[d.entry.city, d.country].filter(Boolean).join(', ')} — click to view in 3D</div></div>`;
-    if (d.type === 'city')
-      return `<div class="globe-tooltip"><b>🏙️ ${d.city.n}</b><div class="t-sub">${d.city.cap ? 'Capital · ' : ''}${fmtPop(d.city.p)} people — click to open country</div>${store.isCityVisited(d.city.c, d.city.n) ? '<div class="t-visited">✓ visited</div>' : ''}</div>`;
-    return `<div class="globe-tooltip"><b>📍 ${d.place.name}</b><div class="t-sub">${'★'.repeat(d.place.rating || 0)}${d.place.notes ? ' · ' + d.place.notes : ''}</div></div>`;
-  })
-  .onObjectClick(d => {
-    if (d.type === 'monument') openViewer(d.entry, d.country);
-    else if (d.type === 'city') { const r = byA2.get(d.city.c); if (r) selectCountry(r, false); flyTo(d.city.la, d.city.lo, 0.25); }
-    else if (d.place.a2 && byA2.has(d.place.a2)) selectCountry(byA2.get(d.place.a2));
-  })
+  .htmlLat('la').htmlLng('lo')
+  .htmlAltitude(0.012)
+  .htmlElement(d => makeMarker(d))
   .labelLat('la').labelLng('lo')
   .labelText(c => latinize(c.n))   // the 3D label font only has basic latin glyphs
   .labelSize(c => (c.cap ? 0.62 : 0.45) * labelZoom())
   .labelDotRadius(c => (c.cap ? 0.28 : 0.2) * labelZoom())
   .labelAltitude(0.012)
   .labelColor(c => store.isCityVisited(c.c, c.n) ? '#2ec4a6' : c.cap ? '#f7b32b' : '#dce6f5')
-  .labelLabel(c => `<div class="globe-tooltip"><b>${c.n}</b><div class="t-sub">${c.cap ? 'Capital · ' : ''}${fmtPop(c.p)} people — click to toggle visited</div></div>`)
-  .onLabelClick(c => { store.toggleCity(c.c, c.n); refreshAll(); });
+  .labelLabel(c => `<div class="globe-tooltip"><b>${c.n}</b><div class="t-sub">${c.cap ? 'Capital · ' : ''}${fmtPop(c.p)} people — click to explore</div></div>`)
+  .onLabelClick(c => openCity(c));
 
 globe.globeMaterial().color = new THREE.Color(0x0d2036);
 globe.globeMaterial().emissive = new THREE.Color(0x081a30);
@@ -171,18 +120,15 @@ globe.renderer().setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.75));
 globe.pointOfView({ lat: 35, lng: 25, altitude: 2.3 }, 0);
 globe.controls().autoRotate = true;
 globe.controls().autoRotateSpeed = 0.4;
-globe.controls().minDistance = 113;   // keep the camera above ~0.13 altitude
+globe.controls().minDistance = 113;
 globe.controls().maxDistance = 480;
 globe.controls().addEventListener('start', () => { globe.controls().autoRotate = false; });
 
-// LOD: re-evaluate which 3D objects exist as the camera moves/zooms
-let lodTimer = null;
+let zoomTimer = null;
 globe.onZoom(p => {
   pov = p;
-  applyZoomScale();
-  if (!lodTimer) lodTimer = setTimeout(() => {
-    lodTimer = null;
-    refreshObjects();
+  if (!zoomTimer) zoomTimer = setTimeout(() => {
+    zoomTimer = null;
     if (selected) refreshLabels();
   }, 300);
 });
@@ -208,7 +154,7 @@ function makeStars() {
     ctx.fillStyle = `rgba(${200 + Math.random() * 55 | 0}, ${210 + Math.random() * 45 | 0}, 255, ${a})`;
     ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
   }
-  for (let i = 0; i < 5; i++) {  // faint nebulae
+  for (let i = 0; i < 5; i++) {
     const x = Math.random() * cv.width, y = Math.random() * cv.height, r = 120 + Math.random() * 200;
     const gr = ctx.createRadialGradient(x, y, 0, x, y, r);
     gr.addColorStop(0, 'rgba(76, 120, 240, 0.05)');
@@ -219,117 +165,40 @@ function makeStars() {
   return cv.toDataURL();
 }
 
-/* ---------- 3D objects on the globe ---------- */
+/* ---------- html markers: famous-city badges + place pins ---------- */
 
-const MON_SCALE = 3.6;
+const famousData = FAMOUS.map(c => ({ type: 'famous', ...c }));
 
-function orient(obj, lat, lng, alt) {
-  const p = globe.getCoords(lat, lng, alt || 0);
-  const normal = new THREE.Vector3(p.x, p.y, p.z).normalize();
-  obj.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), normal);
-  return obj;
-}
-
-// monuments shrink a little as you fly closer, so they don't dwarf the cities
-const zoomFactor = () => THREE.MathUtils.clamp(0.38 + pov.altitude * 0.42, 0.45, 1.12);
-
-function makeObject3D(d) {
-  let g;
-  if (d.type === 'monument') {
-    g = buildMonument(d.entry.b, d.entry.p);
-    d.__base = d.entry.f ? MON_SCALE * 1.15 : MON_SCALE;
-    g.scale.setScalar(d.__base * zoomFactor());
-  } else if (d.type === 'city') {
-    g = buildCity(d.city);
-    g.scale.setScalar(cityZoomScale());
+function makeMarker(d) {
+  let el;
+  if (d.type === 'famous') {
+    el = document.createElement('div');
+    el.className = 'city-badge' + (store.isCityVisited(d.c, d.n) ? ' visited' : '');
+    el.textContent = d.r;
+    el.title = `#${d.r} ${d.n}, ${countryName(d.c)}`;
+    el.addEventListener('click', e => { e.stopPropagation(); openCity(d); });
   } else {
-    // place pin
-    g = new THREE.Group();
-    const c = 0xf7b32b;
-    const stick = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.03, 1.6, 6),
-      new THREE.MeshStandardMaterial({ color: 0xe8edf7, roughness: 0.6 }));
-    stick.position.y = 0.8;
-    const head = new THREE.Mesh(new THREE.SphereGeometry(0.55, 12, 8),
-      new THREE.MeshStandardMaterial({ color: c, emissive: c, emissiveIntensity: 0.35, roughness: 0.4 }));
-    head.position.y = 1.9;
-    g.add(stick, head);
+    el = document.createElement('div');
+    el.className = 'pin-marker';
+    el.textContent = '📍';
+    el.title = `${d.place.name} ${'★'.repeat(d.place.rating || 0)}`;
+    el.addEventListener('click', e => {
+      e.stopPropagation();
+      flyTo(d.place.lat, d.place.lon, 0.35);
+      const r = byA2.get(d.place.a2);
+      if (r) { cityView = null; selected = r; refreshAll(); }
+    });
   }
-  d.__obj = g;
-  return orient(g, d.lat, d.lng);
+  d.__el = el;
+  return el;
 }
 
-let currentObjects = [];
-function applyZoomScale() {
-  const f = zoomFactor(), cf = cityZoomScale();
-  for (const d of currentObjects) {
-    if (!d.__obj) continue;
-    if (d.type === 'monument' && d.__base) d.__obj.scale.setScalar(d.__base * f);
-    else if (d.type === 'city') d.__obj.scale.setScalar(cf);
+function refreshMarkers() {
+  const pins = store.get().places.map(p => ({ type: 'pin', place: p, la: p.lat, lo: p.lon }));
+  globe.htmlElementsData([...famousData, ...pins]);
+  for (const d of famousData) {
+    d.__el?.classList.toggle('visited', store.isCityVisited(d.c, d.n));
   }
-}
-
-const pinDatumCache = new Map();
-function pinDatum(place) {
-  if (!pinDatumCache.has(place.id)) {
-    pinDatumCache.set(place.id, { type: 'pin', place, lat: place.lat, lng: place.lon });
-  }
-  return pinDatumCache.get(place.id);
-}
-
-const cityDatumCache = new Map();
-function cityDatum(c) {
-  const k = c.c + '|' + c.n;
-  if (!cityDatumCache.has(k)) cityDatumCache.set(k, { type: 'city', city: c, lat: c.la, lng: c.lo });
-  return cityDatumCache.get(k);
-}
-
-function refreshObjects() {
-  const data = [];
-  const alt = pov.altitude, radius = viewRadius(alt);
-  const inView = (la, lo) => angDist(pov.lat, pov.lng, la, lo) < radius;
-
-  if (showMonuments) {
-    const codes = new Set(featuredCodes);
-    if (showAllMonuments || alt < LOD.all) {
-      for (const r of countries) codes.add(r.a2);
-    } else if (alt < LOD.curated) {
-      for (const c of curatedCodes) codes.add(c);
-    }
-    for (const code of codes) {
-      const r = byA2.get(code);
-      if (!r) continue;
-      const d = monDatum(r);
-      if (d.entry.f || showAllMonuments || inView(d.lat, d.lng)) data.push(d);
-    }
-    if (selected && !data.includes(monDatum(selected))) data.push(monDatum(selected));
-  } else if (selected) {
-    data.push(monDatum(selected));
-  }
-
-  // 3D city skylines fade in when you fly close: metros first, towns when low.
-  // Suburbs within 0.45° of a bigger city are absorbed to avoid pile-ups.
-  if (alt < LOD.cities) {
-    const minPop = cityMinPop(alt), cap = cityMax(alt);
-    const cand = [];
-    for (const c of cityRows) {
-      if (c.p < minPop) continue;
-      if (angDist(pov.lat, pov.lng, c.la, c.lo) < radius) cand.push(c);
-    }
-    cand.sort((a, b) => b.p - a.p);
-    const shown = [];
-    for (const c of cand) {
-      if (shown.length >= cap) break;
-      if (shown.some(s => angDist(s.la, s.lo, c.la, c.lo) < 0.45)) continue;
-      shown.push(c);
-    }
-    for (const c of shown) data.push(cityDatum(c));
-  }
-
-  for (const p of store.get().places) data.push(pinDatum(p));
-  const sel = selected;
-  globe.objectAltitude(d => (sel && d.a2 === sel.a2 && d.type === 'monument') ? 0.021 : 0.0095);
-  currentObjects = data;
-  globe.objectsData(data);
 }
 
 function refreshLabels() {
@@ -348,12 +217,21 @@ function refreshPolygons() {
 
 function selectCountry(rec, fly = true) {
   selected = rec;
+  cityView = null;
   if (fly) {
     const alt = Math.min(2.2, Math.max(0.45, Math.sqrt((rec.meta.area || 100000) / 900000)));
     globe.controls().autoRotate = false;
     globe.pointOfView({ lat: rec.meta.lat, lng: rec.meta.lon, altitude: alt }, 950);
   }
   refreshAll();
+}
+
+function openCity(c) {
+  cityView = { n: c.n, c: c.c, la: c.la, lo: c.lo, r: c.r, p: c.p, cap: c.cap };
+  if (byA2.has(c.c)) selected = byA2.get(c.c);
+  flyTo(c.la, c.lo, 0.3);
+  refreshAll();
+  loadSights(cityView);
 }
 
 function flyTo(lat, lng, altitude = 0.5, ms = 900) {
@@ -366,10 +244,11 @@ function flyTo(lat, lng, altitude = 0.5, ms = 900) {
 const statsEl = document.getElementById('stats');
 function renderStats() {
   const s = store.stats(countries.length);
+  const seen = store.sightsSeenCount();
   statsEl.innerHTML = `
     <div class="stat"><b>${s.visited}</b><span>countries</span></div>
     <div class="stat"><b>${s.cities}</b><span>cities</span></div>
-    <div class="stat"><b>${s.places}</b><span>places</span></div>
+    <div class="stat"><b>${seen}</b><span>sights</span></div>
     <div class="stat progress"><b>${s.pct}%</b><span>of the world</span>
       <div class="bar"><i style="width:${s.pct}%"></i></div>
     </div>`;
@@ -377,10 +256,9 @@ function renderStats() {
 
 const searchInput = document.getElementById('search');
 const dl = document.getElementById('country-list');
-dl.innerHTML = countries
-  .map(r => r.name).sort()
+dl.innerHTML = [...countries.map(r => r.name), ...FAMOUS.map(c => c.n)].sort()
   .map(n => `<option value="${n.replace(/"/g, '&quot;')}"></option>`).join('');
-const fold = s => s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+const fold = s => s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
 const ALIASES = {
   turkey: 'TR', turkiye: 'TR', uk: 'GB', england: 'GB', usa: 'US', america: 'US',
   uae: 'AE', holland: 'NL', burma: 'MM', 'ivory coast': 'CI', 'cape verde': 'CV'
@@ -388,6 +266,8 @@ const ALIASES = {
 searchInput.addEventListener('change', () => {
   const q = fold(searchInput.value.trim());
   if (!q) return;
+  const city = FAMOUS.find(c => fold(c.n) === q) || FAMOUS.find(c => fold(c.n).startsWith(q));
+  if (city) { openCity(city); searchInput.blur(); return; }
   const rec = (ALIASES[q] && byA2.get(ALIASES[q])) ||
     countries.find(r => fold(r.name) === q) ||
     countries.find(r => fold(r.name).startsWith(q)) ||
@@ -399,8 +279,6 @@ searchInput.addEventListener('change', () => {
 /* ================= toolbar ================= */
 
 const btnAdd = document.getElementById('btn-add-place');
-const btnMon = document.getElementById('btn-monuments');
-const btnAll = document.getElementById('btn-all-monuments');
 
 function setArmedUI() {
   btnAdd.classList.toggle('armed', addPlaceArmed);
@@ -409,17 +287,6 @@ function setArmedUI() {
   document.body.style.cursor = addPlaceArmed ? 'crosshair' : 'grab';
 }
 btnAdd.addEventListener('click', () => { addPlaceArmed = !addPlaceArmed; setArmedUI(); });
-btnMon.addEventListener('click', () => {
-  showMonuments = !showMonuments;
-  btnMon.classList.toggle('active', showMonuments);
-  refreshObjects();
-});
-btnAll.addEventListener('click', () => {
-  showAllMonuments = !showAllMonuments;
-  btnAll.classList.toggle('active', showAllMonuments);
-  if (showAllMonuments && !showMonuments) { showMonuments = true; btnMon.classList.add('active'); }
-  refreshObjects();
-});
 
 document.getElementById('btn-export').addEventListener('click', () => {
   const blob = new Blob([store.export()], { type: 'application/json' });
@@ -436,7 +303,6 @@ importFile.addEventListener('change', async () => {
   if (!f) return;
   try {
     store.import(await f.text());
-    pinDatumCache.clear();
     refreshAll();
   } catch (e) { alert('Could not import: ' + e.message); }
   importFile.value = '';
@@ -447,9 +313,8 @@ importFile.addEventListener('change', async () => {
 const photoFile = document.getElementById('photo-file');
 const photoModal = document.getElementById('photo-modal');
 const photoFull = document.getElementById('photo-full');
-let photoTarget = null;   // { type: 'country', a2 } | { type: 'place', id }
+let photoTarget = null;
 
-// downscale + recompress so localStorage holds dozens of photos
 function shrinkImage(file, maxDim = 900) {
   return new Promise((resolve, reject) => {
     const img = new Image();
@@ -545,6 +410,41 @@ placeForm.addEventListener('submit', e => {
 document.getElementById('place-close').addEventListener('click', () => placeModal.classList.add('hidden'));
 placeModal.addEventListener('click', e => { if (e.target === placeModal) placeModal.classList.add('hidden'); });
 
+/* ================= sights (places to visit) ================= */
+
+let currentSights = [];
+
+async function loadSights(city) {
+  const token = ++sightsToken;
+  currentSights = [];
+  const host = document.getElementById('sights-box');
+  if (host) host.innerHTML = '<div class="empty">Finding places to visit…</div>';
+  try {
+    const sights = await fetchSights(city.la, city.lo);
+    if (token !== sightsToken) return;    // user moved on
+    currentSights = sights;
+  } catch (e) {
+    if (token !== sightsToken) return;
+    currentSights = null;                  // error state
+  }
+  renderPanel();
+  renderStats();
+}
+
+function sightRow(s) {
+  const seen = store.isSightSeen(s.id);
+  return `
+    <div class="sight-row ${seen ? 'seen' : ''}">
+      <span class="check" data-action="toggle-sight" data-id="${s.id}" title="Mark as seen">${seen ? '✓' : ''}</span>
+      ${s.thumb ? `<img class="sight-thumb" src="${s.thumb}" alt="" loading="lazy" />` : '<div class="sight-thumb ph">🏞️</div>'}
+      <div class="s-body">
+        <div class="s-title">${esc(s.title)}</div>
+        ${s.desc ? `<div class="s-desc">${esc(s.desc)}</div>` : ''}
+        <a class="s-link" href="${s.url}" target="_blank" rel="noopener">Wikipedia ↗</a>
+      </div>
+    </div>`;
+}
+
 /* ================= side panel ================= */
 
 const panel = document.getElementById('panel-content');
@@ -553,11 +453,44 @@ const fmtPop = p => p >= 1e6 ? (p / 1e6).toFixed(1) + 'M' : p >= 1e3 ? Math.roun
 const esc = s => String(s).replace(/[&<>"]/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
 
 function renderPanel() {
-  if (!selected) return renderWelcome();
+  if (cityView) return renderCity();
+  if (selected) return renderCountry();
+  renderWelcome();
+}
+
+function renderCity() {
+  const c = cityView;
+  const visited = store.isCityVisited(c.c, c.n);
+  panel.innerHTML = `
+    <span class="back-link" data-action="back-country">← ${byA2.has(c.c) ? esc(countryName(c.c)) : 'back to overview'}</span>
+    <div class="country-head">
+      <span class="flag">${countryFlag(c.c)}</span>
+      <div>
+        <h2>${esc(c.n)}</h2>
+        <div class="sub">${[c.r ? `#${c.r} most famous city` : '', esc(countryName(c.c)), c.p ? fmtPop(c.p) + ' people' : ''].filter(Boolean).join(' · ')}</div>
+      </div>
+    </div>
+
+    <button class="visit-toggle ${visited ? 'on' : ''}" data-action="toggle-cityview">
+      ${visited ? "✓ I've been here" : 'Mark as visited'}
+    </button>
+
+    <h3>🧭 Places to visit</h3>
+    <div id="sights-box">
+      ${currentSights === null
+        ? '<div class="empty">Could not load sights — check your connection and try again.</div>'
+        : currentSights.length
+          ? currentSights.map(sightRow).join('')
+          : '<div class="empty">Finding places to visit…</div>'}
+    </div>
+    <div class="credit">Sight data & images from Wikipedia</div>
+  `;
+}
+
+function renderCountry() {
   const r = selected, a2 = r.a2;
   const c = store.country(a2);
   const cities = citiesBy.get(a2) || [];
-  const mon = monDatum(r).entry;
   const places = store.placesIn(a2);
 
   panel.innerHTML = `
@@ -582,21 +515,13 @@ function renderPanel() {
       ${photoStrip(c.photos || [], 'country')}
     ` : ''}
 
-    <h3>🏛️ Monument</h3>
-    <div class="monument-card">
-      <div class="m-name">${esc(mon.n)}</div>
-      <div class="m-sub">${esc(mon.city || '')}${mon.curated ? '' : ' · stylized generic landmark'}</div>
-      <button data-action="view-monument">View in 3D</button>
-    </div>
-
     <h3>🏙️ Cities <span style="text-transform:none">(${cities.filter(ct => store.isCityVisited(a2, ct.n)).length}/${cities.length} visited)</span></h3>
     ${cities.length ? cities.map((ct, i) => `
-      <div class="city-row ${store.isCityVisited(a2, ct.n) ? 'visited' : ''}" data-action="toggle-city" data-i="${i}">
-        <span class="check">${store.isCityVisited(a2, ct.n) ? '✓' : ''}</span>
-        <span class="c-name">${esc(ct.n)}</span>
+      <div class="city-row ${store.isCityVisited(a2, ct.n) ? 'visited' : ''}">
+        <span class="check" data-action="toggle-city" data-i="${i}">${store.isCityVisited(a2, ct.n) ? '✓' : ''}</span>
+        <span class="c-name" data-action="open-city-row" data-i="${i}" title="Places to visit">${esc(ct.n)}</span>
         ${ct.cap ? '<span class="c-cap">★ capital</span>' : ''}
         <span class="c-pop">${fmtPop(ct.p)}</span>
-        <span data-action="fly-city" data-i="${i}" title="Fly there">🎯</span>
       </div>`).join('') : '<div class="empty">No city data for this territory.</div>'}
 
     <h3>📍 My places here</h3>
@@ -629,8 +554,19 @@ function renderWelcome() {
     <div class="welcome-hero">
       <div class="big">🌍</div>
       <h2 style="justify-content:center">Traverse</h2>
-      <p>Spin the globe and click any country to log your travels, tick off cities,
-      pin your favourite spots and explore each country's iconic monument in 3D.</p>
+      <p>Spin the globe, click a country to log your travels, and tap the gold
+      badges — the world's most famous cities — to discover places to visit.</p>
+    </div>
+
+    <h3>🌆 Top cities of the world</h3>
+    <div class="rank-list">
+      ${FAMOUS.map(c => `
+        <div class="rank-row ${store.isCityVisited(c.c, c.n) ? 'visited' : ''}" data-action="open-famous" data-k="${famousKey(c)}">
+          <span class="rank-num">${c.r}</span>
+          <span class="rank-name">${esc(c.n)}</span>
+          <span class="rank-cc">${countryFlag(c.c)}</span>
+          ${store.isCityVisited(c.c, c.n) ? '<span class="rank-check">✓</span>' : ''}
+        </div>`).join('')}
     </div>
 
     <h3>✈️ Countries visited (${s.visited}/${countries.length})</h3>
@@ -640,12 +576,6 @@ function renderWelcome() {
 
     <h3>📍 My places (${places.length})</h3>
     ${places.length ? places.map(p => placeRow(p)).join('') : '<div class="empty">Arm “Add place” and click anywhere on the globe to save a favourite spot.</div>'}
-
-    <h3>🏛️ Featured monuments</h3>
-    <div class="chips">${featuredCodes.filter(cd => byA2.has(cd)).map(cd => {
-      const r = byA2.get(cd), m = monDatum(r).entry;
-      return `<span class="chip gold" data-action="view-mon-of" data-a2="${cd}">${r.meta.flag} ${esc(m.n)}</span>`;
-    }).join('')}</div>
   `;
 }
 
@@ -657,7 +587,28 @@ panel.addEventListener('click', e => {
   const t = e.target.closest('[data-action]');
   if (!t) return;
   const action = t.dataset.action;
-  if (action === 'add-country-photo') {
+  if (action === 'back') { selected = null; cityView = null; refreshAll(); }
+  else if (action === 'back-country') {
+    cityView = null;
+    if (selected) selectCountry(selected);
+    else refreshAll();
+  }
+  else if (action === 'toggle-country') { store.toggleCountry(selected.a2); refreshAll(); }
+  else if (action === 'toggle-cityview') { store.toggleCity(cityView.c, cityView.n); refreshAll(); }
+  else if (action === 'toggle-sight') { store.toggleSight(+t.dataset.id); renderPanel(); renderStats(); }
+  else if (action === 'toggle-city') {
+    const ct = (citiesBy.get(selected.a2) || [])[+t.dataset.i];
+    if (ct) { store.toggleCity(ct.c, ct.n); refreshAll(); }
+  }
+  else if (action === 'open-city-row') {
+    const ct = (citiesBy.get(selected.a2) || [])[+t.dataset.i];
+    if (ct) openCity(ct);
+  }
+  else if (action === 'open-famous') {
+    const c = FAMOUS.find(x => famousKey(x) === t.dataset.k);
+    if (c) openCity(c);
+  }
+  else if (action === 'add-country-photo') {
     photoTarget = { type: 'country', a2: selected.a2 };
     photoFile.click();
   }
@@ -674,18 +625,6 @@ panel.addEventListener('click', e => {
     else store.removePlacePhoto(owner.slice(6), i);
     renderPanel();
   }
-  else if (action === 'back') { selected = null; refreshAll(); }
-  else if (action === 'toggle-country') { store.toggleCountry(selected.a2); refreshAll(); }
-  else if (action === 'view-monument') { const d = monDatum(selected); openViewer(d.entry, selected.name); }
-  else if (action === 'toggle-city') {
-    const ct = (citiesBy.get(selected.a2) || [])[+t.dataset.i];
-    if (ct) { store.toggleCity(ct.c, ct.n); refreshAll(); }
-  }
-  else if (action === 'fly-city') {
-    e.stopPropagation();
-    const ct = (citiesBy.get(selected.a2) || [])[+t.dataset.i];
-    if (ct) flyTo(ct.la, ct.lo, 0.3);
-  }
   else if (action === 'fly-place') {
     const p = store.get().places.find(x => x.id === t.dataset.id);
     if (p) flyTo(p.lat, p.lon, 0.35);
@@ -695,22 +634,17 @@ panel.addEventListener('click', e => {
     const p = store.get().places.find(x => x.id === t.dataset.id);
     if (p && confirm(`Delete “${p.name}”?`)) {
       store.removePlace(t.dataset.id);
-      pinDatumCache.delete(t.dataset.id);
       refreshAll();
     }
   }
   else if (action === 'open-country') { const r = byA2.get(t.dataset.a2); if (r) selectCountry(r); }
-  else if (action === 'view-mon-of') {
-    const r = byA2.get(t.dataset.a2);
-    if (r) { const d = monDatum(r); openViewer(d.entry, r.name); }
-  }
 });
 
 /* ================= boot ================= */
 
 function refreshAll() {
   refreshPolygons();
-  refreshObjects();
+  refreshMarkers();
   refreshLabels();
   renderStats();
   renderPanel();

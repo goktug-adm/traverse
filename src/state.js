@@ -3,9 +3,10 @@
 const KEY = 'traverse-data-v1';
 
 const blank = () => ({
-  countries: {},   // a2 -> { visited, date, notes }
+  countries: {},   // a2 -> { visited, date, notes, photos }
   cities: {},      // "a2|name" -> { visited, date }
-  places: []       // { id, name, lat, lon, rating, notes, a2, created }
+  sights: {},      // wikipedia pageid -> { seen, date }
+  places: []       // { id, name, lat, lon, rating, notes, a2, photos, created }
 });
 
 let data = load();
@@ -64,6 +65,15 @@ export const store = {
     save();
   },
   citiesVisitedIn: a2 => Object.keys(data.cities).filter(k => k.startsWith(a2 + '|') && data.cities[k].visited).length,
+
+  isSightSeen: id => !!data.sights[id]?.seen,
+  toggleSight(id) {
+    const s = data.sights[id] || (data.sights[id] = {});
+    s.seen = !s.seen;
+    if (s.seen && !s.date) s.date = new Date().toISOString().slice(0, 10);
+    save();
+  },
+  sightsSeenCount: () => Object.values(data.sights).filter(s => s.seen).length,
 
   addPlace(place) {
     data.places.push({ id: 'p' + Date.now() + Math.random().toString(36).slice(2, 6), created: Date.now(), ...place });

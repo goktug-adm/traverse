@@ -29,8 +29,6 @@
 
     <div id="toolbar" class="glass">
       <button id="btn-add-place" class="tool" data-tip="Add a place — click the globe to drop a pin"><span>📍</span></button>
-      <button id="btn-monuments" class="tool" data-tip="Show 3D monument figures on the globe (heavier on the GPU)"><span>🏛️</span></button>
-      <button id="btn-all-monuments" class="tool" data-tip="Force-show every country's monument"><span>🌐</span></button>
       <div class="dock-sep"></div>
       <button id="btn-export" class="tool" data-tip="Export your travels as JSON"><span>💾</span></button>
       <button id="btn-import" class="tool" data-tip="Import travels from JSON"><span>📂</span></button>
@@ -38,25 +36,11 @@
       <input id="photo-file" type="file" accept="image/*" multiple hidden />
     </div>
 
-    <div id="hint" class="hint glass">Drag to spin · scroll to zoom · <b>zoom in to reveal 3D cities</b></div>
+    <div id="hint" class="hint glass">Drag to spin · scroll to zoom · <b>gold badges are the world's top cities</b></div>
 
     <aside id="panel" class="panel">
       <div id="panel-content"></div>
     </aside>
-
-    <div id="viewer-modal" class="modal hidden">
-      <div class="modal-box">
-        <div class="modal-head">
-          <div>
-            <h2 id="viewer-title"></h2>
-            <span id="viewer-sub"></span>
-          </div>
-          <button id="viewer-close" class="close">✕</button>
-        </div>
-        <div id="viewer-canvas"></div>
-        <div class="modal-foot">Stylized low-poly interpretation · drag to orbit, scroll to zoom</div>
-      </div>
-    </div>
 
     <div id="photo-modal" class="modal hidden">
       <img id="photo-full" alt="" />
