@@ -54,6 +54,7 @@ const countryFlag = a2 => byA2.get(a2)?.meta.flag || '🏳️';
 
 let selected = null;      // country record
 let cityView = null;      // { n, c, la, lo, r? } — city detail panel
+let libraryView = false;  // photo library panel
 let hovered = null;
 let addPlaceArmed = false;
 let pendingPlace = null;
@@ -98,7 +99,8 @@ const globe = new Globe(document.getElementById('globe'))
   })
   .onGlobeClick(({ lat, lng }) => {
     if (addPlaceArmed) return beginPlace(lat, lng, '');
-    if (cityView || selected) { cityView = null; selected = null; refreshAll(); }
+    if (cityView || selected || libraryView) { cityView = null; selected = null; libraryView = false; refreshAll(); }
+    closePanel();
   })
   .htmlLat('la').htmlLng('lo')
   .htmlAltitude(0.012)
@@ -200,8 +202,18 @@ function refreshMarkers() {
   }
 }
 
+// on the globe show only the capital + two biggest cities — labels overlap
+// otherwise; the panel list still has all of them
+function topLabelCities(a2) {
+  const list = citiesBy.get(a2) || [];
+  const top = list.slice(0, 3);
+  const cap = list.find(c => c.cap);
+  if (cap && !top.includes(cap)) top[top.length - 1] = cap;
+  return top;
+}
+
 function refreshLabels() {
-  globe.labelsData(selected ? (citiesBy.get(selected.a2) || []) : []);
+  globe.labelsData(selected ? topLabelCities(selected.a2) : []);
   globe.labelColor(c => store.isCityVisited(c.c, c.n) ? '#2ec4a6' : c.cap ? '#f7b32b' : '#dce6f5');
   globe.labelSize(c => (c.cap ? 0.62 : 0.45) * labelZoom());
   globe.labelDotRadius(c => (c.cap ? 0.28 : 0.2) * labelZoom());
@@ -217,6 +229,8 @@ function refreshPolygons() {
 function selectCountry(rec, fly = true) {
   selected = rec;
   cityView = null;
+  libraryView = false;
+  openPanel();
   if (fly) {
     const alt = Math.min(2.2, Math.max(0.45, Math.sqrt((rec.meta.area || 100000) / 900000)));
     globe.controls().autoRotate = false;
@@ -227,11 +241,30 @@ function selectCountry(rec, fly = true) {
 
 function openCity(c) {
   cityView = { n: c.n, c: c.c, la: c.la, lo: c.lo, r: c.r, p: c.p, cap: c.cap };
+  libraryView = false;
   if (byA2.has(c.c)) selected = byA2.get(c.c);
+  openPanel();
   flyTo(c.la, c.lo, 0.3);
   refreshAll();
   loadSights(cityView);
 }
+
+/* ---------- panel drawer (slides in from the side on mobile) ---------- */
+
+const panelBox = document.getElementById('panel');
+const handleBtn = document.getElementById('panel-handle');
+function openPanel() {
+  panelBox.classList.add('open');
+  document.body.classList.add('panel-open');
+  handleBtn.textContent = '❯';
+}
+function closePanel() {
+  panelBox.classList.remove('open');
+  document.body.classList.remove('panel-open');
+  handleBtn.textContent = '❮';
+}
+handleBtn.addEventListener('click', () =>
+  panelBox.classList.contains('open') ? closePanel() : openPanel());
 
 function flyTo(lat, lng, altitude = 0.5, ms = 900) {
   globe.controls().autoRotate = false;
@@ -286,6 +319,12 @@ function setArmedUI() {
   document.body.style.cursor = addPlaceArmed ? 'crosshair' : 'grab';
 }
 btnAdd.addEventListener('click', () => { addPlaceArmed = !addPlaceArmed; setArmedUI(); });
+
+document.getElementById('btn-library').addEventListener('click', () => {
+  libraryView = !libraryView;
+  renderPanel();
+  if (libraryView) openPanel();
+});
 
 document.getElementById('btn-export').addEventListener('click', () => {
   const blob = new Blob([store.export()], { type: 'application/json' });
@@ -452,9 +491,49 @@ const fmtPop = p => p >= 1e6 ? (p / 1e6).toFixed(1) + 'M' : p >= 1e3 ? Math.roun
 const esc = s => String(s).replace(/[&<>"]/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
 
 function renderPanel() {
+  if (libraryView) return renderLibrary();
   if (cityView) return renderCity();
   if (selected) return renderCountry();
   renderWelcome();
+}
+
+/* ---------- library: every photo, country by country ---------- */
+
+const libStrip = photos => `
+  <div class="photo-strip">
+    ${photos.map(ph => `<div class="photo-thumb"><img class="photo-view" src="${ph}" alt="" loading="lazy" /></div>`).join('')}
+  </div>`;
+
+function renderLibrary() {
+  const data = store.get();
+  const groups = new Map();
+  const g = a2 => { if (!groups.has(a2)) groups.set(a2, { cphotos: [], places: [] }); return groups.get(a2); };
+  for (const [a2, c] of Object.entries(data.countries)) if (c.photos?.length) g(a2).cphotos = c.photos;
+  for (const p of data.places) if (p.photos?.length) g(p.a2 || '').places.push(p);
+
+  const total = [...groups.values()]
+    .reduce((n, x) => n + x.cphotos.length + x.places.reduce((m, p) => m + p.photos.length, 0), 0);
+
+  panel.innerHTML = `
+    <span class="back-link" data-action="back">← back to overview</span>
+    <div class="country-head">
+      <span class="flag">🖼️</span>
+      <div>
+        <h2>Library</h2>
+        <div class="sub">${total} photo${total === 1 ? '' : 's'} · ${groups.size} ${groups.size === 1 ? 'country' : 'countries'}</div>
+      </div>
+    </div>
+    ${groups.size ? [...groups.entries()].map(([a2, gr]) => `
+      <h3>${a2 ? countryFlag(a2) : '🌊'} ${esc(a2 ? countryName(a2) : 'International waters')}</h3>
+      ${gr.cphotos.length ? libStrip(gr.cphotos) : ''}
+      ${gr.places.map(p => `
+        <div class="lib-place">📍 ${esc(p.name)} <span class="p-stars">${'★'.repeat(p.rating || 0)}</span></div>
+        ${libStrip(p.photos)}`).join('')}
+    `).join('') : `
+      <div class="empty" style="margin-top:14px">No photos yet. Mark a country as visited and add
+      photos with the ＋ tile, or attach them to your saved places with 📷 — everything
+      you add is collected here, country by country.</div>`}
+  `;
 }
 
 function renderCity() {
@@ -555,6 +634,9 @@ function renderWelcome() {
       <h2 style="justify-content:center">Traverse</h2>
       <p>Spin the globe, click a country to log your travels, and tap the gold
       badges — the world's most famous cities — to discover places to visit.</p>
+      <div class="chips" style="justify-content:center;margin-top:10px">
+        <span class="chip gold" data-action="open-library">🖼️ Photo library</span>
+      </div>
     </div>
 
     <h3>🌆 Top cities of the world</h3>
@@ -586,7 +668,7 @@ panel.addEventListener('click', e => {
   const t = e.target.closest('[data-action]');
   if (!t) return;
   const action = t.dataset.action;
-  if (action === 'back') { selected = null; cityView = null; refreshAll(); }
+  if (action === 'back') { selected = null; cityView = null; libraryView = false; refreshAll(); }
   else if (action === 'back-country') {
     cityView = null;
     if (selected) selectCountry(selected);
@@ -637,6 +719,7 @@ panel.addEventListener('click', e => {
     }
   }
   else if (action === 'open-country') { const r = byA2.get(t.dataset.a2); if (r) selectCountry(r); }
+  else if (action === 'open-library') { libraryView = true; renderPanel(); }
 });
 
 /* ================= boot ================= */
