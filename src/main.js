@@ -81,9 +81,15 @@ let pov = { lat: 35, lng: 25, altitude: 2.3 };   // current camera point-of-view
 const LOD = {
   curated: 1.8,   // below this altitude, curated monuments in view appear
   all: 0.9,       // below this, every country's monument in view appears
-  cities: 0.55,   // below this, 3D city skylines appear
-  maxCities: 70
+  cities: 0.5     // below this, 3D city skylines appear (metros first)
 };
+// which cities deserve a skyline at this altitude, and how many at most
+const cityMinPop = alt => alt > 0.32 ? 1e6 : alt > 0.18 ? 3e5 : 0;
+const cityMax = alt => alt > 0.32 ? 18 : alt > 0.18 ? 35 : 60;
+// skylines grow as you descend, so they pop in small and unobtrusive
+const cityZoomScale = () => THREE.MathUtils.clamp((LOD.cities - pov.altitude) * 2.4 + 0.35, 0.35, 1);
+// on-globe labels keep a sane apparent size as you dive in
+const labelZoom = () => THREE.MathUtils.clamp(pov.altitude * 1.3 + 0.22, 0.35, 1);
 
 // angular distance in degrees between two lat/lng points
 function angDist(lat1, lng1, lat2, lng2) {
@@ -150,8 +156,8 @@ const globe = new Globe(document.getElementById('globe'))
   })
   .labelLat('la').labelLng('lo')
   .labelText(c => latinize(c.n))   // the 3D label font only has basic latin glyphs
-  .labelSize(c => (c.cap ? 0.62 : 0.45))
-  .labelDotRadius(c => (c.cap ? 0.28 : 0.2))
+  .labelSize(c => (c.cap ? 0.62 : 0.45) * labelZoom())
+  .labelDotRadius(c => (c.cap ? 0.28 : 0.2) * labelZoom())
   .labelAltitude(0.012)
   .labelColor(c => store.isCityVisited(c.c, c.n) ? '#2ec4a6' : c.cap ? '#f7b32b' : '#dce6f5')
   .labelLabel(c => `<div class="globe-tooltip"><b>${c.n}</b><div class="t-sub">${c.cap ? 'Capital · ' : ''}${fmtPop(c.p)} people — click to toggle visited</div></div>`)
@@ -164,6 +170,8 @@ globe.globeMaterial().emissiveIntensity = 0.42;
 globe.pointOfView({ lat: 35, lng: 25, altitude: 2.3 }, 0);
 globe.controls().autoRotate = true;
 globe.controls().autoRotateSpeed = 0.4;
+globe.controls().minDistance = 113;   // keep the camera above ~0.13 altitude
+globe.controls().maxDistance = 480;
 globe.controls().addEventListener('start', () => { globe.controls().autoRotate = false; });
 
 // LOD: re-evaluate which 3D objects exist as the camera moves/zooms
@@ -171,7 +179,11 @@ let lodTimer = null;
 globe.onZoom(p => {
   pov = p;
   applyZoomScale();
-  if (!lodTimer) lodTimer = setTimeout(() => { lodTimer = null; refreshObjects(); }, 300);
+  if (!lodTimer) lodTimer = setTimeout(() => {
+    lodTimer = null;
+    refreshObjects();
+    if (selected) refreshLabels();
+  }, 300);
 });
 
 function capColor(f) {
@@ -218,7 +230,7 @@ function orient(obj, lat, lng, alt) {
 }
 
 // monuments shrink a little as you fly closer, so they don't dwarf the cities
-const zoomFactor = () => THREE.MathUtils.clamp(0.5 + pov.altitude * 0.42, 0.6, 1.12);
+const zoomFactor = () => THREE.MathUtils.clamp(0.38 + pov.altitude * 0.42, 0.45, 1.12);
 
 function makeObject3D(d) {
   let g;
@@ -228,7 +240,7 @@ function makeObject3D(d) {
     g.scale.setScalar(d.__base * zoomFactor());
   } else if (d.type === 'city') {
     g = buildCity(d.city);
-    d.__base = null;
+    g.scale.setScalar(cityZoomScale());
   } else {
     // place pin
     g = new THREE.Group();
@@ -247,9 +259,11 @@ function makeObject3D(d) {
 
 let currentObjects = [];
 function applyZoomScale() {
-  const f = zoomFactor();
+  const f = zoomFactor(), cf = cityZoomScale();
   for (const d of currentObjects) {
-    if (d.type === 'monument' && d.__obj && d.__base) d.__obj.scale.setScalar(d.__base * f);
+    if (!d.__obj) continue;
+    if (d.type === 'monument' && d.__base) d.__obj.scale.setScalar(d.__base * f);
+    else if (d.type === 'city') d.__obj.scale.setScalar(cf);
   }
 }
 
@@ -291,15 +305,23 @@ function refreshObjects() {
     data.push(monDatum(selected));
   }
 
-  // 3D city skylines fade in when you fly close
+  // 3D city skylines fade in when you fly close: metros first, towns when low.
+  // Suburbs within 0.45° of a bigger city are absorbed to avoid pile-ups.
   if (alt < LOD.cities) {
-    const near = [];
+    const minPop = cityMinPop(alt), cap = cityMax(alt);
+    const cand = [];
     for (const c of cityRows) {
-      const dist = angDist(pov.lat, pov.lng, c.la, c.lo);
-      if (dist < radius) near.push([dist, c]);
+      if (c.p < minPop) continue;
+      if (angDist(pov.lat, pov.lng, c.la, c.lo) < radius) cand.push(c);
     }
-    near.sort((a, b) => a[0] - b[0]);
-    for (const [, c] of near.slice(0, LOD.maxCities)) data.push(cityDatum(c));
+    cand.sort((a, b) => b.p - a.p);
+    const shown = [];
+    for (const c of cand) {
+      if (shown.length >= cap) break;
+      if (shown.some(s => angDist(s.la, s.lo, c.la, c.lo) < 0.45)) continue;
+      shown.push(c);
+    }
+    for (const c of shown) data.push(cityDatum(c));
   }
 
   for (const p of store.get().places) data.push(pinDatum(p));
@@ -312,6 +334,8 @@ function refreshObjects() {
 function refreshLabels() {
   globe.labelsData(selected ? (citiesBy.get(selected.a2) || []) : []);
   globe.labelColor(c => store.isCityVisited(c.c, c.n) ? '#2ec4a6' : c.cap ? '#f7b32b' : '#dce6f5');
+  globe.labelSize(c => (c.cap ? 0.62 : 0.45) * labelZoom());
+  globe.labelDotRadius(c => (c.cap ? 0.28 : 0.2) * labelZoom());
 }
 
 function refreshPolygons() {
