@@ -1,9 +1,11 @@
+import '@fontsource-variable/space-grotesk';
+import '@fontsource-variable/inter';
 import './style.css';
 import Globe from 'globe.gl';
 import * as THREE from 'three';
 import * as topojson from 'topojson-client';
 
-import worldTopo from './data/countries-110m.json';
+import worldTopo from 'world-atlas/countries-110m.json';
 import countryMeta from './data/countries.json';
 import cityRows from './data/cities.json';
 
