@@ -50,6 +50,14 @@ const famousKey = c => c.c + '|' + c.n;
 const countryName = a2 => byA2.get(a2)?.name || a2;
 const countryFlag = a2 => byA2.get(a2)?.meta.flag || '🏳️';
 
+// one glowing dot per country: its capital (rendered in WebGL, so it sticks
+// to the globe perfectly while spinning)
+const capitals = [];
+for (const [a2, list] of citiesBy) {
+  const cap = list.find(c => c.cap);
+  if (cap && byA2.has(a2)) capitals.push({ type: 'cap', ...cap });
+}
+
 /* ================= ui state ================= */
 
 let selected = null;      // country record
@@ -102,9 +110,24 @@ const globe = new Globe(document.getElementById('globe'))
     if (cityView || selected || libraryView) { cityView = null; selected = null; libraryView = false; refreshAll(); }
     closePanel();
   })
-  .htmlLat('la').htmlLng('lo')
-  .htmlAltitude(0.012)
-  .htmlElement(d => makeMarker(d))
+  .pointLat('la').pointLng('lo')
+  .pointAltitude(0.01)
+  .pointRadius(d => d.type === 'cap' ? 0.34 : 0.42)
+  .pointColor(d => d.type === 'cap'
+    ? (store.isCountryVisited(d.c) ? '#2ee6b8' : '#ffd166')
+    : '#ff7eb6')
+  .pointsTransitionDuration(0)
+  .pointLabel(d => d.type === 'cap'
+    ? `<div class="globe-tooltip"><b>⭐ ${d.n}</b><div class="t-sub">Capital of ${countryName(d.c)} — click to explore</div></div>`
+    : `<div class="globe-tooltip"><b>📍 ${d.place.name}</b><div class="t-sub">${'★'.repeat(d.place.rating || 0)}${d.place.notes ? ' · ' + d.place.notes : ''}</div></div>`)
+  .onPointClick(d => {
+    if (d.type === 'cap') openCity(d);
+    else {
+      flyTo(d.place.lat, d.place.lon, 0.35);
+      const r = byA2.get(d.place.a2);
+      if (r) { cityView = null; selected = r; refreshAll(); openPanel(); }
+    }
+  })
   .labelLat('la').labelLng('lo')
   .labelText(c => latinize(c.n))   // the 3D label font only has basic latin glyphs
   .labelSize(c => (c.cap ? 0.62 : 0.45) * labelZoom())
@@ -167,39 +190,14 @@ function makeStars() {
   return cv.toDataURL();
 }
 
-/* ---------- html markers: famous-city badges + place pins ---------- */
+/* ---------- globe points: capital dots + place pins (WebGL, no drift) ---------- */
 
-const famousData = FAMOUS.map(c => ({ type: 'famous', ...c }));
-
-function makeMarker(d) {
-  let el;
-  if (d.type === 'famous') {
-    el = document.createElement('div');
-    el.className = 'city-badge' + (store.isCityVisited(d.c, d.n) ? ' visited' : '');
-    el.title = `#${d.r} ${d.n}, ${countryName(d.c)}`;
-    el.addEventListener('click', e => { e.stopPropagation(); openCity(d); });
-  } else {
-    el = document.createElement('div');
-    el.className = 'pin-marker';
-    el.textContent = '📍';
-    el.title = `${d.place.name} ${'★'.repeat(d.place.rating || 0)}`;
-    el.addEventListener('click', e => {
-      e.stopPropagation();
-      flyTo(d.place.lat, d.place.lon, 0.35);
-      const r = byA2.get(d.place.a2);
-      if (r) { cityView = null; selected = r; refreshAll(); }
-    });
-  }
-  d.__el = el;
-  return el;
-}
-
-function refreshMarkers() {
+function refreshPoints() {
   const pins = store.get().places.map(p => ({ type: 'pin', place: p, la: p.lat, lo: p.lon }));
-  globe.htmlElementsData([...famousData, ...pins]);
-  for (const d of famousData) {
-    d.__el?.classList.toggle('visited', store.isCityVisited(d.c, d.n));
-  }
+  globe.pointsData([...capitals, ...pins]);
+  globe.pointColor(d => d.type === 'cap'
+    ? (store.isCountryVisited(d.c) ? '#2ee6b8' : '#ffd166')
+    : '#ff7eb6');
 }
 
 // on the globe show only the capital + two biggest cities — labels overlap
@@ -632,8 +630,9 @@ function renderWelcome() {
     <div class="welcome-hero">
       <div class="big">🌍</div>
       <h2 style="justify-content:center">Traverse</h2>
-      <p>Spin the globe, click a country to log your travels, and tap the gold
-      badges — the world's most famous cities — to discover places to visit.</p>
+      <p>Spin the globe and click a country to log your travels. The glowing
+      dots are capitals — tap one, or pick from the ranked list below, to
+      discover places to visit.</p>
       <div class="chips" style="justify-content:center;margin-top:10px">
         <span class="chip gold" data-action="open-library">🖼️ Photo library</span>
       </div>
@@ -726,7 +725,7 @@ panel.addEventListener('click', e => {
 
 function refreshAll() {
   refreshPolygons();
-  refreshMarkers();
+  refreshPoints();
   refreshLabels();
   renderStats();
   renderPanel();
